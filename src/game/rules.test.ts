@@ -17,6 +17,13 @@ import {
   validateMathProblem,
   validateRoundTouchAnswers,
 } from './rules';
+import { isSafePublishableKey, isValidSupabaseUrl } from '../services/supabaseClient';
+import {
+  buildMatchResultRecord,
+  createUniqueMatchId,
+  formatSyncIndicatorLabel,
+  mergeMatchHistories,
+} from '../services/matchStorage';
 
 test('Level 1 (Mudah) generates exact addition and subtraction up to 10.000 matching specification', () => {
   const p1 = generateMathProblem('level1', 1);
@@ -246,3 +253,102 @@ test('determineWinner includes required appreciation quote and accuracy percenta
   assert.equal(res.yellowAccuracy, 50);
   assert.equal(res.quote, APPRECIATION_QUOTE);
 });
+
+test('Supabase security blocks service_role keys and validates publishable anon keys', () => {
+  assert.equal(isSafePublishableKey(''), false);
+  assert.equal(isSafePublishableKey('sb_secret_1234567890123456789012345'), false);
+  assert.equal(isSafePublishableKey('service_role_key_123456789012345'), false);
+
+  // JWT containing {"role":"service_role"}
+  const serviceJwt =
+    'eyJhbGciOiJIUzI1NiJ9.' +
+    Buffer.from(JSON.stringify({ role: 'service_role' })).toString('base64url') +
+    '.sig';
+  assert.equal(isSafePublishableKey(serviceJwt), false);
+
+  // JWT containing {"role":"anon"}
+  const anonJwt =
+    'eyJhbGciOiJIUzI1NiJ9.' +
+    Buffer.from(JSON.stringify({ role: 'anon' })).toString('base64url') +
+    '.sig';
+  assert.equal(isSafePublishableKey(anonJwt), true);
+  assert.equal(isValidSupabaseUrl('https://xyzcompany.supabase.co'), true);
+  assert.equal(isValidSupabaseUrl('https://your-project-id.supabase.co'), false);
+});
+
+test('Offline-first match storage generates unique IDs, formats sync indicators, and deduplicates without losing unsynced local data', () => {
+  const id1 = createUniqueMatchId(1700000000000);
+  const id2 = createUniqueMatchId(1700000000000);
+  assert.notEqual(id1, id2);
+  assert.ok(id1.startsWith('match-'));
+
+  assert.equal(
+    formatSyncIndicatorLabel('online_synced'),
+    'Online – Tersinkronisasi'
+  );
+  assert.equal(
+    formatSyncIndicatorLabel('offline_local'),
+    'Offline – Data tersimpan lokal'
+  );
+  assert.equal(formatSyncIndicatorLabel('syncing'), 'Menyinkronkan');
+  assert.equal(
+    formatSyncIndicatorLabel('sync_failed'),
+    'Sinkronisasi gagal – Akan dicoba kembali'
+  );
+
+  const blue = { ...createInitialTeamState('blue'), score: 40, correctCount: 4, wrongCount: 1 };
+  const yellow = { ...createInitialTeamState('yellow'), score: 20, correctCount: 2, wrongCount: 3 };
+
+  const localUnsynced = buildMatchResultRecord({
+    id: 'match-unique-001',
+    startedAt: '2026-11-01T10:00:00.000Z',
+    finishedAt: '2026-11-01T10:03:00.000Z',
+    settings: {
+      battleMode: 'touch',
+      level: 'level1',
+      durationSeconds: 180,
+      totalQuestions: 5,
+    },
+    blueTeam: blue,
+    yellowTeam: yellow,
+    history: [],
+    matchStatus: 'completed',
+    syncStatus: 'pending',
+  });
+
+  const remoteStaleSameId = {
+    ...localUnsynced,
+    blueScore: 10,
+    syncStatus: 'synced' as const,
+  };
+
+  const remoteSecondMatch = buildMatchResultRecord({
+    id: 'match-unique-002',
+    startedAt: '2026-11-01T09:00:00.000Z',
+    finishedAt: '2026-11-01T09:03:00.000Z',
+    settings: {
+      battleMode: 'motion',
+      level: 'level2',
+      durationSeconds: 180,
+      totalQuestions: 5,
+    },
+    blueTeam: blue,
+    yellowTeam: yellow,
+    history: [],
+    matchStatus: 'completed',
+    syncStatus: 'synced',
+  });
+
+  const merged = mergeMatchHistories(
+    [localUnsynced],
+    [remoteStaleSameId, remoteSecondMatch]
+  );
+
+  // Deduplicated by unique ID (2 records total, not 3)
+  assert.equal(merged.length, 2);
+  // Preserves unsynced local record instead of overwriting with stale remote before sync completes
+  const preservedFirst = merged.find((m) => m.id === 'match-unique-001')!;
+  assert.equal(preservedFirst.syncStatus, 'pending');
+  assert.equal(preservedFirst.blueScore, 40);
+});
+

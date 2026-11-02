@@ -60,6 +60,30 @@ import {
   WaterSplashCanvas,
   WaterSplashCanvasHandle,
 } from './components/WaterSplashCanvas';
+import {
+  ActiveMatchCheckpoint,
+  buildMatchResultRecord,
+  clearActiveCheckpoint,
+  createUniqueMatchId,
+  getAllLocalMatches,
+  loadActiveCheckpointSync,
+  MatchResultRecord,
+  saveActiveCheckpoint,
+  saveAndSyncMatchResult,
+  subscribeToMatchResultsRealtime,
+  syncAllPendingAndFetchHistory,
+  SyncIndicatorState,
+} from './services/matchStorage';
+import {
+  getDeviceSessionId,
+  getSchoolId,
+  isSupabaseConfigured,
+} from './services/supabaseClient';
+import {
+  MatchHistoryModal,
+  SyncStatusBadge,
+  UnfinishedMatchRecoveryModal,
+} from './components/SyncAndRecoveryModals';
 
 export default function App() {
   const initialAutostart =
@@ -100,9 +124,29 @@ export default function App() {
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const [isGuideOpen, setIsGuideOpen] = useState<boolean>(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
+  const [isHistoryOpen, setIsHistoryOpen] = useState<boolean>(false);
   const [isRoundValidated, setIsRoundValidated] = useState<boolean>(false);
-  const [statusAnnouncement, setStatusAnnouncement] = useState<string>(
+  const [, setStatusAnnouncement] = useState<string>(
     'Hitung bersama kelompokmu dan pilih jawaban yang benar!'
+  );
+
+  // Offline-First, Supabase Realtime & Power-Outage Recovery State
+  const [syncIndicator, setSyncIndicator] = useState<SyncIndicatorState>(() =>
+    typeof navigator !== 'undefined' &&
+    navigator.onLine !== false &&
+    isSupabaseConfigured()
+      ? 'online_synced'
+      : 'offline_local'
+  );
+  const [savedMatches, setSavedMatches] = useState<MatchResultRecord[]>([]);
+  const [recoverableCheckpoint, setRecoverableCheckpoint] =
+    useState<ActiveMatchCheckpoint | null>(() => loadActiveCheckpointSync());
+
+  const activeMatchIdRef = useRef<string>(createUniqueMatchId());
+  const activeMatchStartedAtRef = useRef<string>(new Date().toISOString());
+  const matchResultSavedRef = useRef<boolean>(false);
+  const matchFinishReasonRef = useRef<'completed' | 'finished_early'>(
+    'completed'
   );
 
   const splashCanvasRef = useRef<WaterSplashCanvasHandle | null>(null);
@@ -123,6 +167,10 @@ export default function App() {
   blueBubblesRef.current = blueBubbles;
   const yellowBubblesRef = useRef<AnswerBubble[]>(yellowBubbles);
   yellowBubblesRef.current = yellowBubbles;
+  const historyRef = useRef<RoundHistoryItem[]>(history);
+  historyRef.current = history;
+  const secondsLeftRef = useRef<number>(secondsLeft);
+  secondsLeftRef.current = secondsLeft;
 
   // Mirror game state & active battle mode to document.body.dataset
   useEffect(() => {
@@ -140,6 +188,8 @@ export default function App() {
   // Return to Title Screen & stop any active camera/timers
   const handleBackToTitle = useCallback(() => {
     clearPendingRoundTimer();
+    clearActiveCheckpoint();
+    setRecoverableCheckpoint(null);
     validationLockedRef.current = false;
     setIsRoundValidated(false);
     setCameraStatus('initializing');
@@ -159,6 +209,7 @@ export default function App() {
       const activeSettings = customSettings ?? settingsRef.current;
 
       if (nextRoundNumber > activeSettings.totalQuestions) {
+        matchFinishReasonRef.current = 'completed';
         soundEngine.playVictoryFanfare();
         document.body.dataset.state = 'gameover';
         setGameState('gameover');
@@ -197,8 +248,16 @@ export default function App() {
   const startBattle = useCallback(
     (customSettings?: GameSettings, modeOverride?: BattleMode) => {
       clearPendingRoundTimer();
+      clearActiveCheckpoint();
+      setRecoverableCheckpoint(null);
       validationLockedRef.current = false;
       setIsRoundValidated(false);
+
+      // Generate a fresh unique Match ID so results are never duplicated
+      activeMatchIdRef.current = createUniqueMatchId();
+      activeMatchStartedAtRef.current = new Date().toISOString();
+      matchResultSavedRef.current = false;
+      matchFinishReasonRef.current = 'completed';
 
       const baseSettings = customSettings ?? settingsRef.current;
       const activeSettings: GameSettings = modeOverride
@@ -240,6 +299,49 @@ export default function App() {
     },
     []
   );
+
+  // Resume an unfinished match after power outage or sudden browser close
+  const handleResumeCheckpoint = useCallback(
+    (checkpoint: ActiveMatchCheckpoint) => {
+      clearPendingRoundTimer();
+      validationLockedRef.current = false;
+      setIsRoundValidated(false);
+
+      activeMatchIdRef.current = checkpoint.matchId;
+      activeMatchStartedAtRef.current = checkpoint.startedAt;
+      matchResultSavedRef.current = false;
+      matchFinishReasonRef.current = 'completed';
+
+      setSettings(checkpoint.settings);
+      settingsRef.current = checkpoint.settings;
+      setSecondsLeft(checkpoint.secondsLeft);
+      setProblem(checkpoint.problem);
+      setBlueTeam(checkpoint.blueTeam);
+      setYellowTeam(checkpoint.yellowTeam);
+      setBlueBubbles(
+        checkpoint.blueBubbles?.length
+          ? checkpoint.blueBubbles
+          : createTeamBubbles('blue', checkpoint.problem)
+      );
+      setYellowBubbles(
+        checkpoint.yellowBubbles?.length
+          ? checkpoint.yellowBubbles
+          : createTeamBubbles('yellow', checkpoint.problem)
+      );
+      setHistory(checkpoint.history ?? []);
+      setSplashPopups([]);
+      setRecoverableCheckpoint(null);
+
+      document.body.dataset.state = 'playing';
+      setGameState('playing');
+    },
+    []
+  );
+
+  const handleDiscardCheckpoint = useCallback(() => {
+    clearActiveCheckpoint();
+    setRecoverableCheckpoint(null);
+  }, []);
 
   // ============================================================================
   // MODE 1: TOUCH BATTLE HANDLERS (Two-Phase Lock-in & Simultaneous Validation)
@@ -810,9 +912,130 @@ export default function App() {
     return () => window.clearInterval(interval);
   }, [gameState, executeSimultaneousValidation]);
 
+  // 1. Periodic Local Checkpoint Backup during Active Match (Ketahanan Gangguan Listrik)
+  useEffect(() => {
+    if (gameState !== 'playing' && gameState !== 'paused') return;
+
+    const persistCurrentCheckpoint = () => {
+      if (
+        gameStateRef.current !== 'playing' &&
+        gameStateRef.current !== 'paused'
+      ) {
+        return;
+      }
+      saveActiveCheckpoint({
+        matchId: activeMatchIdRef.current,
+        schoolId: getSchoolId(),
+        sessionId: getDeviceSessionId(),
+        startedAt: activeMatchStartedAtRef.current,
+        updatedAt: new Date().toISOString(),
+        settings: settingsRef.current,
+        secondsLeft: secondsLeftRef.current,
+        problem: problemRef.current,
+        blueTeam: blueTeamRef.current,
+        yellowTeam: yellowTeamRef.current,
+        blueBubbles: blueBubblesRef.current,
+        yellowBubbles: yellowBubblesRef.current,
+        history: historyRef.current,
+      });
+    };
+
+    persistCurrentCheckpoint();
+
+    window.addEventListener('beforeunload', persistCurrentCheckpoint);
+    window.addEventListener('pagehide', persistCurrentCheckpoint);
+    return () => {
+      window.removeEventListener('beforeunload', persistCurrentCheckpoint);
+      window.removeEventListener('pagehide', persistCurrentCheckpoint);
+    };
+  }, [
+    gameState,
+    problem.roundNumber,
+    blueTeam.score,
+    yellowTeam.score,
+    blueTeam.hasAnsweredRound,
+    yellowTeam.hasAnsweredRound,
+    history.length,
+    Math.floor(secondsLeft / 3),
+  ]);
+
+  // 2. Offline-First Match Result Save & Supabase Sync when entering 'gameover'
+  useEffect(() => {
+    if (gameState !== 'gameover' || matchResultSavedRef.current) return;
+    matchResultSavedRef.current = true;
+    clearActiveCheckpoint();
+
+    const finalRecord = buildMatchResultRecord({
+      id: activeMatchIdRef.current,
+      startedAt: activeMatchStartedAtRef.current,
+      settings: settingsRef.current,
+      blueTeam: blueTeamRef.current,
+      yellowTeam: yellowTeamRef.current,
+      history: historyRef.current,
+      matchStatus: matchFinishReasonRef.current,
+    });
+
+    void saveAndSyncMatchResult(finalRecord, setSyncIndicator).then(async () => {
+      const all = await getAllLocalMatches();
+      setSavedMatches(all);
+    });
+  }, [gameState]);
+
+  // 3. Initial Sync, Online/Offline Auto-Recovery & Single-Channel Realtime Subscription
+  const handleManualSync = useCallback(() => {
+    void syncAllPendingAndFetchHistory(setSyncIndicator).then(({ matches }) => {
+      setSavedMatches(matches);
+    });
+  }, []);
+
+  useEffect(() => {
+    void getAllLocalMatches().then((local) => {
+      setSavedMatches(local);
+    });
+    void syncAllPendingAndFetchHistory(setSyncIndicator).then(({ matches }) => {
+      setSavedMatches(matches);
+    });
+
+    const handleOnline = () => {
+      void syncAllPendingAndFetchHistory(setSyncIndicator).then(
+        ({ matches }) => {
+          setSavedMatches(matches);
+        }
+      );
+    };
+
+    const handleOffline = () => {
+      setSyncIndicator('offline_local');
+    };
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    const unsubscribeRealtime = subscribeToMatchResultsRealtime(() => {
+      void syncAllPendingAndFetchHistory(setSyncIndicator).then(
+        ({ matches }) => {
+          setSavedMatches(matches);
+        }
+      );
+    });
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+      unsubscribeRealtime();
+    };
+  }, []);
+
   if (gameState === 'title') {
     return (
       <>
+        <div className="fixed right-4 top-3 z-30">
+          <SyncStatusBadge
+            indicator={syncIndicator}
+            matchCount={savedMatches.length}
+            onOpenHistory={() => setIsHistoryOpen(true)}
+          />
+        </div>
         <TitleScreen
           settings={settings}
           onUpdateSettings={(next) => {
@@ -822,6 +1045,18 @@ export default function App() {
           }}
           onStartGame={(modeOverride) => startBattle(undefined, modeOverride)}
           onOpenGuide={() => setIsGuideOpen(true)}
+        />
+        <UnfinishedMatchRecoveryModal
+          checkpoint={recoverableCheckpoint}
+          onResumeMatch={handleResumeCheckpoint}
+          onStartFreshMatch={handleDiscardCheckpoint}
+        />
+        <MatchHistoryModal
+          isOpen={isHistoryOpen}
+          matches={savedMatches}
+          indicator={syncIndicator}
+          onSyncNow={handleManualSync}
+          onClose={() => setIsHistoryOpen(false)}
         />
         <SettingsModal
           isOpen={isSettingsOpen}
@@ -1206,6 +1441,7 @@ export default function App() {
         onOpenGuide={() => setIsGuideOpen(true)}
         onFinishEarly={() => {
           clearPendingRoundTimer();
+          matchFinishReasonRef.current = 'finished_early';
           soundEngine.playVictoryFanfare();
           document.body.dataset.state = 'gameover';
           setGameState('gameover');
@@ -1222,6 +1458,24 @@ export default function App() {
         currentProblem={problem}
         onPlayAgain={() => startBattle()}
         onBackToTitle={handleBackToTitle}
+      />
+
+      {gameState === 'gameover' && (
+        <div className="fixed right-4 top-3 z-50">
+          <SyncStatusBadge
+            indicator={syncIndicator}
+            matchCount={savedMatches.length}
+            onOpenHistory={() => setIsHistoryOpen(true)}
+          />
+        </div>
+      )}
+
+      <MatchHistoryModal
+        isOpen={isHistoryOpen}
+        matches={savedMatches}
+        indicator={syncIndicator}
+        onSyncNow={handleManualSync}
+        onClose={() => setIsHistoryOpen(false)}
       />
 
       <SettingsModal
