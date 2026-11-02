@@ -1,0 +1,112 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --font-display: 'Fredoka', 'Plus Jakarta Sans', system-ui, sans-serif;
+    --font-sans: 'Plus Jakarta Sans', system-ui, sans-serif;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    user-select: none;
+    -webkit-user-select: none;
+    overflow: hidden;
+  }
+
+  h1, h2, h3, .font-display {
+    font-family: var(--font-display);
+  }
+}
+
+@keyframes floatSlow {
+  0%, 100% {
+    transform: translateY(0px) scale(1);
+  }
+  50% {
+    transform: translateY(-8px) scale(1.02);
+  }
+}
+
+@keyframes waterfallFlow {
+  0% {
+    transform: translateY(-25%);
+  }
+  100% {
+    transform: translateY(25%);
+  }
+}
+
+@keyframes ripplePulse {
+  0% {
+    transform: scale(0.85);
+    opacity: 0.9;
+  }
+  100% {
+    transform: scale(1.65);
+    opacity: 0;
+  }
+}
+
+@keyframes scorePop {
+  0% {
+    transform: translateY(0) scale(0.7);
+    opacity: 0;
+  }
+  25% {
+    transform: translateY(-14px) scale(1.15);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(-48px) scale(0.95);
+    opacity: 0;
+  }
+}
+
+@keyframes beamFlash {
+  0% {
+    opacity: 0.95;
+    transform: scaleY(0.3);
+  }
+  40% {
+    opacity: 1;
+    transform: scaleY(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scaleY(1.08);
+  }
+}
+
+.animate-float-slow {
+  animation: floatSlow 3.4s ease-in-out infinite;
+}
+
+.animate-waterfall {
+  animation: waterfallFlow 1.6s linear infinite;
+}
+
+.animate-score-pop {
+  animation: scorePop 0.85s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.text-stroke-blue {
+  -webkit-text-stroke: 5px #075985;
+  paint-order: stroke fill;
+  text-shadow: 0 3px 0 #0c4a6e, 0 5px 10px rgba(7, 89, 133, 0.45);
+}
+
+.text-stroke-yellow {
+  -webkit-text-stroke: 5px #92400e;
+  paint-order: stroke fill;
+  text-shadow: 0 3px 0 #78350f, 0 5px 10px rgba(146, 64, 14, 0.45);
+}
+
+.text-stroke-navy {
+  -webkit-text-stroke: 4px #0f172a;
+  paint-order: stroke fill;
+  text-shadow: 0 3px 0 #0f172a;
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}

@@ -1,0 +1,6 @@
+{
+  "name": "Aqua Math Motion Battle — Kelas 5 SD",
+  "description": "Game edukasi matematika interaktif Dual Mode (Touch Battle & Motion Battle) untuk peserta didik Kelas 5 SD bertema Aqua City (Tim Biru vs Tim Kuning).",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
