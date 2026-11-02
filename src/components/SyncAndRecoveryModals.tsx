@@ -23,11 +23,12 @@ import { LEVEL_METADATA } from '../game/rules';
 interface SyncStatusBadgeProps {
   indicator: SyncIndicatorState;
   matchCount: number;
+  errorMessage?: string | null;
   onOpenHistory: () => void;
 }
 
 /**
- * Indikator status sederhana (tidak menampilkan pesan teknis yang membingungkan siswa):
+ * Indikator status sinkronisasi beserta peringatan jelas apabila penyimpanan ke Supabase gagal:
  * - Online – Tersinkronisasi
  * - Offline – Data tersimpan lokal
  * - Menyinkronkan
@@ -36,6 +37,7 @@ interface SyncStatusBadgeProps {
 export const SyncStatusBadge: React.FC<SyncStatusBadgeProps> = ({
   indicator,
   matchCount,
+  errorMessage,
   onOpenHistory,
 }) => {
   const label = formatSyncIndicatorLabel(indicator);
@@ -69,25 +71,40 @@ export const SyncStatusBadge: React.FC<SyncStatusBadgeProps> = ({
   };
 
   return (
-    <div className="pointer-events-auto flex items-center gap-2">
-      <div
-        data-testid="sync-status-indicator"
-        data-sync-state={indicator}
-        className={`flex items-center gap-1.5 rounded-xl border px-3 py-1 text-xs font-bold shadow-lg whitespace-nowrap ${getBadgeStyle()}`}
-      >
-        {renderIcon()}
-        <span>{label}</span>
+    <div className="pointer-events-auto flex flex-col items-end gap-1.5">
+      <div className="flex items-center gap-2">
+        <div
+          data-testid="sync-status-indicator"
+          data-sync-state={indicator}
+          title={errorMessage || label}
+          className={`flex items-center gap-1.5 rounded-xl border px-3 py-1 text-xs font-bold shadow-lg whitespace-nowrap ${getBadgeStyle()}`}
+        >
+          {renderIcon()}
+          <span data-testid="sync-status-label">{label}</span>
+        </div>
+
+        <button
+          type="button"
+          data-testid="btn-open-match-history"
+          onClick={onOpenHistory}
+          className="flex items-center gap-1.5 rounded-xl border border-sky-300/60 bg-slate-950/85 px-3 py-1 text-xs font-bold text-sky-100 shadow-lg hover:bg-slate-800 transition-colors cursor-pointer whitespace-nowrap"
+        >
+          <History className="h-3.5 w-3.5 text-yellow-300" />
+          <span>Riwayat ({matchCount})</span>
+        </button>
       </div>
 
-      <button
-        type="button"
-        data-testid="btn-open-match-history"
-        onClick={onOpenHistory}
-        className="flex items-center gap-1.5 rounded-xl border border-sky-300/60 bg-slate-950/85 px-3 py-1 text-xs font-bold text-sky-100 shadow-lg hover:bg-slate-800 transition-colors cursor-pointer whitespace-nowrap"
-      >
-        <History className="h-3.5 w-3.5 text-yellow-300" />
-        <span>Riwayat ({matchCount})</span>
-      </button>
+      {errorMessage && (
+        <button
+          type="button"
+          data-testid="sync-error-banner"
+          onClick={onOpenHistory}
+          className="flex max-w-md items-start gap-2 rounded-xl border border-rose-400/80 bg-rose-950/95 px-3 py-2 text-left text-[11px] font-semibold text-rose-100 shadow-xl hover:bg-rose-900/95 cursor-pointer"
+        >
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-rose-300" />
+          <span className="line-clamp-2">{errorMessage}</span>
+        </button>
+      )}
     </div>
   );
 };
@@ -207,6 +224,7 @@ interface MatchHistoryModalProps {
   isOpen: boolean;
   matches: MatchResultRecord[];
   indicator: SyncIndicatorState;
+  errorMessage?: string | null;
   onSyncNow: () => void;
   onClose: () => void;
 }
@@ -215,10 +233,17 @@ export const MatchHistoryModal: React.FC<MatchHistoryModalProps> = ({
   isOpen,
   matches,
   indicator,
+  errorMessage,
   onSyncNow,
   onClose,
 }) => {
   if (!isOpen) return null;
+
+  const activeError =
+    errorMessage ||
+    matches.find((m) => m.syncStatus === 'failed' && m.lastSyncError)
+      ?.lastSyncError ||
+    null;
 
   return (
     <div
@@ -274,6 +299,24 @@ export const MatchHistoryModal: React.FC<MatchHistoryModalProps> = ({
           <span className="tabular-nums">{matches.length} Pertandingan</span>
         </div>
 
+        {/* Pesan Error Supabase yang Jelas jika Penyimpanan Gagal */}
+        {activeError && (
+          <div
+            data-testid="history-modal-error-alert"
+            className="mt-2.5 flex items-start gap-2.5 rounded-xl border border-rose-400/80 bg-rose-950/90 px-3.5 py-2.5 text-left text-xs font-semibold text-rose-100"
+          >
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-rose-300" />
+            <div>
+              <span className="block font-extrabold text-rose-200">
+                Peringatan Sinkronisasi Supabase:
+              </span>
+              <span className="mt-0.5 block leading-relaxed">
+                {activeError}
+              </span>
+            </div>
+          </div>
+        )}
+
         {/* Match List */}
         <div className="mt-3 flex-1 space-y-2.5 overflow-y-auto pr-1">
           {matches.length === 0 ? (
@@ -296,53 +339,60 @@ export const MatchHistoryModal: React.FC<MatchHistoryModalProps> = ({
                   key={m.id}
                   data-testid="match-history-item"
                   data-match-id={m.id}
-                  className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-sky-400/30 bg-blue-950/75 px-4 py-3 text-left"
+                  className="flex flex-col gap-1.5 rounded-2xl border border-sky-400/30 bg-blue-950/75 px-4 py-3 text-left"
                 >
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="font-display text-sm sm:text-base font-extrabold text-yellow-300">
-                        {winnerLabel}
-                      </span>
-                      <span aria-hidden="true" className="text-sky-400">
-                        ·
-                      </span>
-                      <span className="text-xs font-bold uppercase text-sky-200">
-                        {m.battleMode === 'touch' ? 'TOUCH' : 'MOTION'}
-                      </span>
-                      <span aria-hidden="true" className="text-sky-400">
-                        ·
-                      </span>
-                      <span className="text-xs font-semibold text-sky-200">
-                        {levelTitle}
-                      </span>
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-display text-sm sm:text-base font-extrabold text-yellow-300">
+                          {winnerLabel}
+                        </span>
+                        <span aria-hidden="true" className="text-sky-400">
+                          ·
+                        </span>
+                        <span className="text-xs font-bold uppercase text-sky-200">
+                          {m.battleMode === 'touch' ? 'TOUCH' : 'MOTION'}
+                        </span>
+                        <span aria-hidden="true" className="text-sky-400">
+                          ·
+                        </span>
+                        <span className="text-xs font-semibold text-sky-200">
+                          {levelTitle}
+                        </span>
+                      </div>
+                      <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-sky-100/90 tabular-nums">
+                        <span>
+                          Biru: <strong>{m.blueScore}</strong> ({m.blueCorrect}{' '}
+                          Benar)
+                        </span>
+                        <span aria-hidden="true">·</span>
+                        <span>
+                          Kuning: <strong>{m.yellowScore}</strong> (
+                          {m.yellowCorrect} Benar)
+                        </span>
+                        <span aria-hidden="true">·</span>
+                        <span>{m.totalQuestions} Soal</span>
+                      </div>
                     </div>
-                    <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-sky-100/90 tabular-nums">
-                      <span>
-                        Biru: <strong>{m.blueScore}</strong> ({m.blueCorrect}{' '}
-                        Benar)
-                      </span>
-                      <span aria-hidden="true">·</span>
-                      <span>
-                        Kuning: <strong>{m.yellowScore}</strong> (
-                        {m.yellowCorrect} Benar)
-                      </span>
-                      <span aria-hidden="true">·</span>
-                      <span>{m.totalQuestions} Soal</span>
-                    </div>
-                  </div>
 
-                  <div className="flex items-center gap-1.5 text-xs font-bold">
-                    {m.syncStatus === 'synced' ? (
-                      <span className="flex items-center gap-1 text-emerald-300">
-                        <CheckCircle2 className="h-3.5 w-3.5" />
-                        <span>Tersinkronisasi</span>
-                      </span>
-                    ) : (
-                      <span className="flex items-center gap-1 text-amber-300">
-                        <CloudOff className="h-3.5 w-3.5" />
-                        <span>Tersimpan Lokal</span>
-                      </span>
-                    )}
+                    <div className="flex items-center gap-1.5 text-xs font-bold">
+                      {m.syncStatus === 'synced' ? (
+                        <span className="flex items-center gap-1 text-emerald-300">
+                          <CheckCircle2 className="h-3.5 w-3.5" />
+                          <span>Tersinkronisasi</span>
+                        </span>
+                      ) : m.syncStatus === 'failed' ? (
+                        <span className="flex items-center gap-1 text-rose-300">
+                          <AlertCircle className="h-3.5 w-3.5" />
+                          <span>Gagal Sinkron (Tersimpan Lokal)</span>
+                        </span>
+                      ) : (
+                        <span className="flex items-center gap-1 text-amber-300">
+                          <CloudOff className="h-3.5 w-3.5" />
+                          <span>Tersimpan Lokal</span>
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </div>
               );

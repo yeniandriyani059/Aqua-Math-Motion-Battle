@@ -21,8 +21,13 @@ import { isSafePublishableKey, isValidSupabaseUrl } from '../services/supabaseCl
 import {
   buildMatchResultRecord,
   createUniqueMatchId,
+  formatSupabaseErrorMessage,
   formatSyncIndicatorLabel,
+  fromSupabaseRow,
   mergeMatchHistories,
+  SUPABASE_MATCH_TABLE,
+  toSupabaseRow,
+  toValidMatchUuid,
 } from '../services/matchStorage';
 
 test('Level 1 (Mudah) generates exact addition and subtraction up to 10.000 matching specification', () => {
@@ -351,4 +356,67 @@ test('Offline-first match storage generates unique IDs, formats sync indicators,
   assert.equal(preservedFirst.syncStatus, 'pending');
   assert.equal(preservedFirst.blueScore, 40);
 });
+
+test('Supabase row mapping matches public.aqua_battle_matches schema and formats RLS errors clearly', () => {
+  assert.equal(SUPABASE_MATCH_TABLE, 'aqua_battle_matches');
+
+  const blue = {
+    ...createInitialTeamState('blue'),
+    score: 50,
+    correctCount: 5,
+    wrongCount: 0,
+  };
+  const yellow = {
+    ...createInitialTeamState('yellow'),
+    score: 30,
+    correctCount: 3,
+    wrongCount: 2,
+  };
+
+  const record = buildMatchResultRecord({
+    id: 'match-1730512345678-abc12345',
+    startedAt: '2026-11-01T12:00:00.000Z',
+    finishedAt: '2026-11-01T12:02:00.000Z',
+    schoolId: 'sdn-karanggintung-06',
+    sessionId: 'dev-session-01',
+    settings: {
+      battleMode: 'touch',
+      level: 'level2',
+      durationSeconds: 120,
+      totalQuestions: 5,
+    },
+    blueTeam: blue,
+    yellowTeam: yellow,
+    history: [],
+    matchStatus: 'completed',
+  });
+
+  const row = toSupabaseRow(record);
+  assert.equal(row.id, toValidMatchUuid('match-1730512345678-abc12345'));
+  assert.match(
+    row.id,
+    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-a[0-9a-f]{3}-[0-9a-f]{12}$/
+  );
+  assert.equal(row.match_code, 'match-1730512345678-abc12345');
+  assert.equal(row.game_mode, 'touch');
+  assert.equal(row.game_level, 2);
+  assert.equal(row.question_count, 5);
+  assert.equal(row.blue_score, 50);
+  assert.equal(row.yellow_score, 30);
+  assert.equal(row.match_data.school_id, 'sdn-karanggintung-06');
+
+  const roundTrip = fromSupabaseRow(row);
+  assert.equal(roundTrip.id, 'match-1730512345678-abc12345');
+  assert.equal(roundTrip.schoolId, 'sdn-karanggintung-06');
+  assert.equal(roundTrip.level, 'level2');
+  assert.equal(roundTrip.totalQuestions, 5);
+
+  const rlsErrorMsg = formatSupabaseErrorMessage({
+    code: '42501',
+    message: 'new row violates row-level security policy for table "aqua_battle_matches"',
+  });
+  assert.ok(rlsErrorMsg.includes('42501'));
+  assert.ok(rlsErrorMsg.includes('aqua_battle_matches'));
+});
+
 

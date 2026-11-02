@@ -960,6 +960,8 @@ export default function App() {
   ]);
 
   // 2. Offline-First Match Result Save & Supabase Sync when entering 'gameover'
+  const [syncErrorMessage, setSyncErrorMessage] = useState<string | null>(null);
+
   useEffect(() => {
     if (gameState !== 'gameover' || matchResultSavedRef.current) return;
     matchResultSavedRef.current = true;
@@ -975,31 +977,41 @@ export default function App() {
       matchStatus: matchFinishReasonRef.current,
     });
 
-    void saveAndSyncMatchResult(finalRecord, setSyncIndicator).then(async () => {
-      const all = await getAllLocalMatches();
-      setSavedMatches(all);
-    });
+    void saveAndSyncMatchResult(finalRecord, setSyncIndicator).then(
+      async ({ errorMessage }) => {
+        setSyncErrorMessage(errorMessage);
+        const all = await getAllLocalMatches();
+        setSavedMatches(all);
+      }
+    );
   }, [gameState]);
 
   // 3. Initial Sync, Online/Offline Auto-Recovery & Single-Channel Realtime Subscription
   const handleManualSync = useCallback(() => {
-    void syncAllPendingAndFetchHistory(setSyncIndicator).then(({ matches }) => {
-      setSavedMatches(matches);
-    });
+    void syncAllPendingAndFetchHistory(setSyncIndicator).then(
+      ({ matches, errorMessage }) => {
+        setSavedMatches(matches);
+        setSyncErrorMessage(errorMessage);
+      }
+    );
   }, []);
 
   useEffect(() => {
     void getAllLocalMatches().then((local) => {
       setSavedMatches(local);
     });
-    void syncAllPendingAndFetchHistory(setSyncIndicator).then(({ matches }) => {
-      setSavedMatches(matches);
-    });
+    void syncAllPendingAndFetchHistory(setSyncIndicator).then(
+      ({ matches, errorMessage }) => {
+        setSavedMatches(matches);
+        setSyncErrorMessage(errorMessage);
+      }
+    );
 
     const handleOnline = () => {
       void syncAllPendingAndFetchHistory(setSyncIndicator).then(
-        ({ matches }) => {
+        ({ matches, errorMessage }) => {
           setSavedMatches(matches);
+          setSyncErrorMessage(errorMessage);
         }
       );
     };
@@ -1013,8 +1025,9 @@ export default function App() {
 
     const unsubscribeRealtime = subscribeToMatchResultsRealtime(() => {
       void syncAllPendingAndFetchHistory(setSyncIndicator).then(
-        ({ matches }) => {
+        ({ matches, errorMessage }) => {
           setSavedMatches(matches);
+          setSyncErrorMessage(errorMessage);
         }
       );
     });
@@ -1033,6 +1046,7 @@ export default function App() {
           <SyncStatusBadge
             indicator={syncIndicator}
             matchCount={savedMatches.length}
+            errorMessage={syncErrorMessage}
             onOpenHistory={() => setIsHistoryOpen(true)}
           />
         </div>
@@ -1055,6 +1069,7 @@ export default function App() {
           isOpen={isHistoryOpen}
           matches={savedMatches}
           indicator={syncIndicator}
+          errorMessage={syncErrorMessage}
           onSyncNow={handleManualSync}
           onClose={() => setIsHistoryOpen(false)}
         />
@@ -1465,6 +1480,7 @@ export default function App() {
           <SyncStatusBadge
             indicator={syncIndicator}
             matchCount={savedMatches.length}
+            errorMessage={syncErrorMessage}
             onOpenHistory={() => setIsHistoryOpen(true)}
           />
         </div>
@@ -1474,6 +1490,7 @@ export default function App() {
         isOpen={isHistoryOpen}
         matches={savedMatches}
         indicator={syncIndicator}
+        errorMessage={syncErrorMessage}
         onSyncNow={handleManualSync}
         onClose={() => setIsHistoryOpen(false)}
       />

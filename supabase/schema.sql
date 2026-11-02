@@ -1,91 +1,64 @@
--- ============================================================================
--- AQUA MATH BATTLE — SUPABASE SCHEMA, REALTIME & ROW LEVEL SECURITY (RLS)
--- Jalankan skrip ini pada SQL Editor di Dashboard Supabase.
--- ============================================================================
+-- =============================================================================
+-- AQUA MATH BATTLE — SUPABASE SCHEMA & ROW LEVEL SECURITY (RLS)
+-- Tabel Utama: public.aqua_battle_matches
+-- =============================================================================
 
-create table if not exists public.match_results (
-  id text primary key,
-  school_id text not null default 'sd-aqua-city',
-  session_id text not null,
-  started_at timestamptz not null,
-  finished_at timestamptz not null default now(),
-  battle_mode text not null check (battle_mode in ('touch', 'motion')),
-  level text not null check (level in ('level1', 'level2', 'level3')),
-  duration_seconds integer not null check (duration_seconds > 0 and duration_seconds <= 3600),
-  total_questions integer not null check (total_questions > 0 and total_questions <= 100),
-  blue_score integer not null default 0 check (blue_score >= 0),
-  yellow_score integer not null default 0 check (yellow_score >= 0),
-  blue_correct integer not null default 0 check (blue_correct >= 0),
-  blue_wrong integer not null default 0 check (blue_wrong >= 0),
-  yellow_correct integer not null default 0 check (yellow_correct >= 0),
-  yellow_wrong integer not null default 0 check (yellow_wrong >= 0),
-  winner text not null check (winner in ('blue', 'yellow', 'draw')),
-  match_status text not null check (match_status in ('in_progress', 'completed', 'finished_early')),
-  round_history jsonb not null default '[]'::jsonb,
-  updated_at timestamptz not null default now()
+-- 1. Tabel hasil pertandingan sesuai struktur public.aqua_battle_matches
+CREATE TABLE IF NOT EXISTS public.aqua_battle_matches (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  match_code TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  finished_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  game_mode TEXT NOT NULL CHECK (game_mode IN ('touch', 'motion')),
+  game_level INTEGER NOT NULL DEFAULT 1 CHECK (game_level IN (1, 2, 3)),
+  duration_seconds INTEGER NOT NULL CHECK (duration_seconds > 0),
+  question_count INTEGER NOT NULL CHECK (question_count > 0),
+  blue_score INTEGER NOT NULL DEFAULT 0 CHECK (blue_score >= 0),
+  yellow_score INTEGER NOT NULL DEFAULT 0 CHECK (yellow_score >= 0),
+  blue_correct INTEGER NOT NULL DEFAULT 0 CHECK (blue_correct >= 0),
+  blue_wrong INTEGER NOT NULL DEFAULT 0 CHECK (blue_wrong >= 0),
+  yellow_correct INTEGER NOT NULL DEFAULT 0 CHECK (yellow_correct >= 0),
+  yellow_wrong INTEGER NOT NULL DEFAULT 0 CHECK (yellow_wrong >= 0),
+  winner TEXT NOT NULL CHECK (winner IN ('blue', 'yellow', 'draw')),
+  match_status TEXT NOT NULL CHECK (match_status IN ('in_progress', 'completed', 'finished_early')),
+  match_data JSONB NOT NULL DEFAULT '{}'::jsonb
 );
 
-create index if not exists idx_match_results_school_finished
-  on public.match_results (school_id, finished_at desc);
+-- 2. Aktifkan Row Level Security (RLS)
+ALTER TABLE public.aqua_battle_matches ENABLE ROW LEVEL SECURITY;
 
--- Aktifkan Row Level Security (RLS)
-alter table public.match_results enable row level security;
+-- 3. Policy SELECT: Izinkan pembacaan riwayat pertandingan oleh role anon & authenticated
+DROP POLICY IF EXISTS "Allow anon read aqua_battle_matches" ON public.aqua_battle_matches;
+CREATE POLICY "Allow anon read aqua_battle_matches"
+  ON public.aqua_battle_matches
+  FOR SELECT
+  TO anon, authenticated
+  USING (true);
 
--- Kebijakan 1: Pembacaan riwayat pertandingan (PID & Laptop dengan school_id yang valid)
-drop policy if exists "Allow read match_results by school_id" on public.match_results;
-create policy "Allow read match_results by school_id"
-  on public.match_results
-  for select
-  to anon, authenticated
-  using (
-    char_length(school_id) >= 2 and char_length(school_id) <= 64
+-- 4. Policy INSERT: Izinkan penyimpanan hasil pertandingan baru oleh role anon & authenticated
+DROP POLICY IF EXISTS "Allow anon insert aqua_battle_matches" ON public.aqua_battle_matches;
+CREATE POLICY "Allow anon insert aqua_battle_matches"
+  ON public.aqua_battle_matches
+  FOR INSERT
+  TO anon, authenticated
+  WITH CHECK (
+    char_length(match_code) >= 4
+    AND blue_score >= 0
+    AND yellow_score >= 0
   );
 
--- Kebijakan 2: Penyimpanan pertandingan baru (INSERT) dengan validasi ID unik & school_id
-drop policy if exists "Allow insert match_results with valid constraints" on public.match_results;
-create policy "Allow insert match_results with valid constraints"
-  on public.match_results
-  for insert
-  to anon, authenticated
-  with check (
-    char_length(id) >= 8 and char_length(id) <= 96
-    and char_length(school_id) >= 2 and char_length(school_id) <= 64
-    and char_length(session_id) >= 4 and char_length(session_id) <= 96
-    and blue_score >= 0 and yellow_score >= 0
+-- 5. Policy UPDATE: Izinkan sinkronisasi ulang (upsert) oleh role anon & authenticated
+DROP POLICY IF EXISTS "Allow anon update aqua_battle_matches" ON public.aqua_battle_matches;
+CREATE POLICY "Allow anon update aqua_battle_matches"
+  ON public.aqua_battle_matches
+  FOR UPDATE
+  TO anon, authenticated
+  USING (true)
+  WITH CHECK (
+    char_length(match_code) >= 4
+    AND blue_score >= 0
+    AND yellow_score >= 0
   );
-
--- Kebijakan 3: Pembaruan sinkronisasi (UPSERT/UPDATE) hanya diizinkan dari sesi/sekolah yang sama
-drop policy if exists "Allow upsert match_results from same school and session" on public.match_results;
-create policy "Allow upsert match_results from same school and session"
-  on public.match_results
-  for update
-  to anon, authenticated
-  using (
-    char_length(school_id) >= 2 and char_length(session_id) >= 4
-  )
-  with check (
-    char_length(id) >= 8 and char_length(id) <= 96
-    and blue_score >= 0 and yellow_score >= 0
-  );
-
--- Kebijakan 4: Tolak penghapusan publik (DELETE dilarang untuk anon/authenticated)
-drop policy if exists "Deny public delete on match_results" on public.match_results;
-create policy "Deny public delete on match_results"
-  on public.match_results
-  for delete
-  to anon, authenticated
-  using (false);
-
--- Aktifkan Supabase Realtime khusus untuk tabel match_results
-do $$
-begin
-  if not exists (
-    select 1
-    from pg_publication_tables
-    where pubname = 'supabase_realtime'
-      and schemaname = 'public'
-      and tablename = 'match_results'
-  ) then
-    alter publication supabase_realtime add table public.match_results;
-  end if;
-end $$;

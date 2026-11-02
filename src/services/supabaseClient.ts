@@ -55,12 +55,20 @@ export function isValidSupabaseUrl(url: string): boolean {
   return /^https:\/\/[a-zA-Z0-9-]+(\.[a-zA-Z0-9-]+)+/.test(trimmed);
 }
 
-function getEnvVar(name: string): string {
+function getEnvVar(
+  name: 'VITE_SUPABASE_URL' | 'VITE_SUPABASE_ANON_KEY' | 'VITE_SCHOOL_ID'
+): string {
   try {
-    const metaEnv = (import.meta as unknown as { env?: Record<string, string> })
-      ?.env;
-    if (metaEnv && typeof metaEnv[name] === 'string') {
-      return metaEnv[name].trim();
+    if (typeof import.meta !== 'undefined' && import.meta.env) {
+      const val =
+        name === 'VITE_SUPABASE_URL'
+          ? import.meta.env.VITE_SUPABASE_URL
+          : name === 'VITE_SUPABASE_ANON_KEY'
+          ? import.meta.env.VITE_SUPABASE_ANON_KEY
+          : import.meta.env.VITE_SCHOOL_ID;
+      if (typeof val === 'string' && val.trim().length > 0) {
+        return val.trim();
+      }
     }
   } catch {
     // Fallback untuk Node test environment
