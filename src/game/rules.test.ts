@@ -29,6 +29,16 @@ import {
   toSupabaseRow,
   toValidMatchUuid,
 } from '../services/matchStorage';
+import {
+  BLUE_DETECTION_ZONE,
+  createInitialDualTrackerState,
+  createInitialTrackerState,
+  isPointInDetectionZone,
+  stepDualPlayerTracker,
+  stepSinglePlayerTracker,
+  TRACKER_CONFIG,
+  YELLOW_DETECTION_ZONE,
+} from './handTracking';
 
 test('Level 1 (Mudah) generates exact addition and subtraction up to 10.000 matching specification', () => {
   const p1 = generateMathProblem('level1', 1);
@@ -418,5 +428,208 @@ test('Supabase row mapping matches public.aqua_battle_matches schema and formats
   assert.ok(rlsErrorMsg.includes('42501'));
   assert.ok(rlsErrorMsg.includes('aqua_battle_matches'));
 });
+
+test('Single Player Hand Tracking locks onto primary player, ignores background students, filters out-of-zone hands, persists across brief frame drops, and debounces single answers', () => {
+  // 1. Out-of-zone hand is marked 'outside_zone' (Yellow) and cannot trigger answers
+  let tracker = createInitialTrackerState('blue');
+  assert.equal(isPointInDetectionZone(0.01, 0.5, BLUE_DETECTION_ZONE), false);
+  assert.equal(isPointInDetectionZone(0.25, 0.5, BLUE_DETECTION_ZONE), true);
+
+  const outStep = stepSinglePlayerTracker(
+    tracker,
+    [{ id: 'edge-hand', x: 0.01, y: 0.5, mass: 30, upperRatio: 0.5 }],
+    1000
+  );
+  assert.equal(outStep.state.zoneState, 'outside_zone');
+  assert.equal(outStep.emittedGesture, null);
+  assert.equal(outStep.isReadyToAnswer, false);
+
+  // 2. Primary player raises hand inside detection zone -> locks on after 3 stable frames
+  let now = 1100;
+  for (let f = 0; f < 3; f++) {
+    const step = stepSinglePlayerTracker(
+      tracker,
+      [{ id: 'primary', x: 0.25, y: 0.55, mass: 26, upperRatio: 0.1 }],
+      now
+    );
+    tracker = step.state;
+    now += 50;
+  }
+  assert.equal(tracker.zoneState, 'detected');
+  assert.ok(tracker.smoothedX !== null && Math.abs(tracker.smoothedX - 0.25) < 0.01);
+
+  // 3. Another student waves aggressively in the background/other side -> ignored!
+  const withBystander = stepSinglePlayerTracker(
+    tracker,
+    [
+      { id: 'bystander-bigger', x: 0.78, y: 0.35, mass: 60, upperRatio: 0.6 },
+      { id: 'primary', x: 0.26, y: 0.54, mass: 24, upperRatio: 0.1 },
+    ],
+    now
+  );
+  tracker = withBystander.state;
+  assert.equal(tracker.activeTeam, 'blue');
+  assert.ok(tracker.smoothedX! < 0.30);
+
+  // 4. Primary hand temporarily disappears for a few frames -> preserves lock & never auto-answers
+  const lostStep1 = stepSinglePlayerTracker(
+    tracker,
+    [{ id: 'bystander-only', x: 0.78, y: 0.35, mass: 60, upperRatio: 0.6 }],
+    now + 50
+  );
+  assert.equal(lostStep1.state.missingFrames, 1);
+  assert.equal(lostStep1.state.zoneState, 'detected');
+  assert.equal(lostStep1.emittedGesture, null);
+  assert.ok(lostStep1.state.smoothedX! < 0.30);
+
+  // 5. Primary player performs deliberate upward push -> emits exactly 1 answer gesture, then blocks repeat until neutral reset + cooldown
+  const triggerStep = stepSinglePlayerTracker(
+    tracker,
+    [{ id: 'primary-push', x: 0.26, y: 0.28, mass: 35, upperRatio: 0.45 }],
+    now + 100
+  );
+  assert.ok(triggerStep.emittedGesture !== null);
+  assert.equal(triggerStep.emittedGesture?.team, 'blue');
+  assert.equal(triggerStep.emittedGesture?.gesture, 'punch_forward');
+  assert.equal(triggerStep.state.awaitingNeutralReset, true);
+
+  // Immediate follow-up push 100ms later is blocked by cooldown & awaitingNeutralReset
+  const duplicatePush = stepSinglePlayerTracker(
+    triggerStep.state,
+    [{ id: 'primary-push-2', x: 0.26, y: 0.24, mass: 50, upperRatio: 0.6 }],
+    now + 200
+  );
+  assert.equal(duplicatePush.emittedGesture, null);
+  assert.equal(
+    duplicatePush.state.cooldownUntil >=
+      now + 100 + TRACKER_CONFIG.GESTURE_DEBOUNCE_MS,
+    true
+  );
+});
+
+test('Dual Player Motion Tracking supports independent solo play, simultaneous dual answers, opposite directions, background student rejection, and temporary hand loss without cross-team interference', () => {
+  // Scenario 1: Tim Biru playing alone (Left Zone only)
+  let dual = createInitialDualTrackerState();
+  let t = 2000;
+  for (let i = 0; i < 3; i++) {
+    const res = stepDualPlayerTracker(
+      dual,
+      [{ id: 'blue-p1', x: 0.25, y: 0.55, mass: 28, upperRatio: 0.1 }],
+      t
+    );
+    dual = res.state;
+    t += 50;
+    assert.equal(res.blueResult.isHandDetected, true);
+    assert.equal(res.yellowResult.isHandDetected, false);
+    assert.equal(res.yellowResult.state.zoneState, 'waiting');
+  }
+
+  // Scenario 2: Tim Kuning playing alone (Right Zone only)
+  let yellowOnlyDual = createInitialDualTrackerState();
+  for (let i = 0; i < 3; i++) {
+    const res = stepDualPlayerTracker(
+      yellowOnlyDual,
+      [{ id: 'yellow-p1', x: 0.75, y: 0.55, mass: 28, upperRatio: 0.1 }],
+      t
+    );
+    yellowOnlyDual = res.state;
+    t += 50;
+    assert.equal(res.yellowResult.isHandDetected, true);
+    assert.equal(res.blueResult.isHandDetected, false);
+    assert.equal(res.blueResult.state.zoneState, 'waiting');
+  }
+
+  // Lock both players in `dual`
+  for (let i = 0; i < 3; i++) {
+    const res = stepDualPlayerTracker(
+      dual,
+      [
+        { id: 'blue-p1', x: 0.25, y: 0.55, mass: 28, upperRatio: 0.1 },
+        { id: 'yellow-p1', x: 0.75, y: 0.55, mass: 28, upperRatio: 0.1 },
+      ],
+      t
+    );
+    dual = res.state;
+    t += 50;
+  }
+  assert.equal(dual.blue.zoneState, 'detected');
+  assert.equal(dual.yellow.zoneState, 'detected');
+
+  // Scenario 4: Both players move in opposite horizontal directions simultaneously (Blue left, Yellow right)
+  const oppositeStep = stepDualPlayerTracker(
+    dual,
+    [
+      { id: 'blue-left', x: 0.08, y: 0.55, mass: 28, upperRatio: 0.1 },
+      { id: 'yellow-right', x: 0.92, y: 0.55, mass: 28, upperRatio: 0.1 },
+    ],
+    t
+  );
+  dual = oppositeStep.state;
+  assert.equal(oppositeStep.blueResult.emittedGesture?.team, 'blue');
+  assert.equal(oppositeStep.blueResult.emittedGesture?.gesture, 'slash_side');
+  assert.equal(oppositeStep.blueResult.emittedGesture?.direction, 'left');
+  assert.equal(oppositeStep.yellowResult.emittedGesture?.team, 'yellow');
+  assert.equal(oppositeStep.yellowResult.emittedGesture?.gesture, 'slash_side');
+  assert.equal(oppositeStep.yellowResult.emittedGesture?.direction, 'right');
+
+  // Advance time past slash_side short cooldown and stabilize with Scenario 5 (background students behind both players)
+  t += 450;
+  const withBystanders = stepDualPlayerTracker(
+    dual,
+    [
+      { id: 'blue-p1', x: 0.16, y: 0.55, mass: 26, upperRatio: 0.1 },
+      { id: 'blue-bystander', x: 0.44, y: 0.72, mass: 55, upperRatio: 0.5 }, // Far from locked Blue hand (~0.14)
+      { id: 'yellow-p1', x: 0.84, y: 0.55, mass: 26, upperRatio: 0.1 },
+      { id: 'yellow-bystander', x: 0.55, y: 0.72, mass: 55, upperRatio: 0.5 }, // Far from locked Yellow hand (~0.86)
+    ],
+    t
+  );
+  dual = withBystanders.state;
+  assert.ok(dual.blue.smoothedX! < 0.22); // Bystander at 0.44 ignored!
+  assert.ok(dual.yellow.smoothedX! > 0.78); // Bystander at 0.55 ignored!
+
+  // Scenario 6: Blue temporarily loses detection for 1 frame while Yellow stays active -> Blue lock preserved, no false gesture
+  t += 50;
+  const blueDropStep = stepDualPlayerTracker(
+    dual,
+    [{ id: 'yellow-p1', x: 0.84, y: 0.55, mass: 26, upperRatio: 0.1 }],
+    t
+  );
+  dual = blueDropStep.state;
+  assert.equal(blueDropStep.blueResult.state.missingFrames, 1);
+  assert.equal(blueDropStep.blueResult.isHandDetected, true);
+  assert.equal(blueDropStep.blueResult.emittedGesture, null);
+  assert.equal(blueDropStep.yellowResult.isHandDetected, true);
+
+  // Scenario 3: Both teams answer simultaneously with upward push -> Both emit punch_forward for their own team ONLY
+  t += 50;
+  const simultaneousAnswerStep = stepDualPlayerTracker(
+    dual,
+    [
+      { id: 'blue-push', x: 0.16, y: 0.28, mass: 48, upperRatio: 0.5 },
+      { id: 'yellow-push', x: 0.84, y: 0.28, mass: 48, upperRatio: 0.5 },
+    ],
+    t
+  );
+  assert.equal(simultaneousAnswerStep.blueResult.emittedGesture?.team, 'blue');
+  assert.equal(
+    simultaneousAnswerStep.blueResult.emittedGesture?.gesture,
+    'punch_forward'
+  );
+  assert.equal(
+    simultaneousAnswerStep.yellowResult.emittedGesture?.team,
+    'yellow'
+  );
+  assert.equal(
+    simultaneousAnswerStep.yellowResult.emittedGesture?.gesture,
+    'punch_forward'
+  );
+  assert.equal(
+    isPointInDetectionZone(0.84, 0.28, YELLOW_DETECTION_ZONE),
+    true
+  );
+});
+
+
 
 

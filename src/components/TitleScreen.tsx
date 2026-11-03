@@ -1,11 +1,13 @@
 import React from 'react';
-import { Play, BookOpen, Pointer, Hand } from 'lucide-react';
+import { Play, BookOpen, Pointer, Hand, Maximize2, Minimize2 } from 'lucide-react';
 import { BattleMode, DifficultyLevel, GameSettings } from '../game/types';
 import { BlueMascotSvg, YellowMascotSvg } from './MascotPlaque';
 import { AquaKingdomBackdrop } from './AquaKingdomBackdrop';
 
 interface TitleScreenProps {
   settings: GameSettings;
+  isFullscreen: boolean;
+  onToggleFullscreen: () => void;
   onUpdateSettings: (next: GameSettings) => void;
   onStartGame: (modeOverride?: BattleMode) => void;
   onOpenGuide: () => void;
@@ -34,10 +36,13 @@ const SIMPLE_LEVEL_OPTIONS: Array<{
 ];
 
 /**
- * Halaman Awal Aqua Math Battle — Minimalis, Ceria, dan Ramah Siswa Kelas 5 SD.
+ * Halaman Awal Aqua Math Battle — Dioptimalkan untuk Mode Full Screen PID (Interactive Flat Panel)
+ * Minimalis, Ceria, dan Ramah Siswa Kelas 5 SD.
  */
 export const TitleScreen: React.FC<TitleScreenProps> = ({
   settings,
+  isFullscreen,
+  onToggleFullscreen,
   onUpdateSettings,
   onStartGame,
   onOpenGuide,
@@ -46,17 +51,17 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
   const isMotionSelected = settings.battleMode === 'motion';
 
   return (
-    <main className="relative flex h-screen w-screen flex-col items-center justify-center overflow-hidden px-6 py-4 select-none">
+    <main className="relative flex h-dvh w-dvw flex-col items-center justify-center overflow-hidden px-3 py-2 sm:px-5 sm:py-3 select-none">
       {/* Illustrated Aqua City Backdrop */}
       <AquaKingdomBackdrop />
 
-      {/* Main Content Container */}
-      <div className="relative z-10 flex w-full max-w-6xl flex-col items-center justify-center">
+      {/* Main PID Stage Container — utilizes full landscape width without excess margins */}
+      <div className="relative z-10 flex h-full w-full max-w-[96vw] xl:max-w-7xl flex-col items-center justify-center gap-3 sm:gap-4 lg:gap-5">
         {/* 1. JUDUL UTAMA: AQUA MATH BATTLE & Subjudul “Hitung • Bergerak • Menang!” */}
-        <header className="mb-4 flex flex-col items-center text-center">
+        <header className="flex flex-col items-center text-center shrink-0">
           <svg
             viewBox="0 0 640 165"
-            className="h-28 sm:h-32 w-auto drop-shadow-2xl"
+            className="h-24 sm:h-28 lg:h-32 xl:h-36 w-auto drop-shadow-2xl"
             role="img"
             aria-label="Aqua Math Battle — Hitung • Bergerak • Menang!"
           >
@@ -117,39 +122,39 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
         </header>
 
         {/* 2. MIDDLE STAGE: Karakter Tim Biru (Kiri) + Panel Pengaturan (Tengah) + Karakter Tim Kuning (Kanan) */}
-        <div className="flex w-full items-center justify-center gap-6 lg:gap-10">
+        <div className="flex w-full items-center justify-between gap-4 lg:gap-8">
           {/* Karakter Tim Biru (Sisi Kiri) */}
           <div className="animate-float-slow hidden md:flex flex-col items-center shrink-0">
-            <BlueMascotSvg className="h-36 w-36 lg:h-44 lg:w-44 drop-shadow-2xl" />
-            <span className="mt-2 rounded-2xl border-2 border-sky-200 bg-blue-900/95 px-5 py-1.5 font-display text-lg font-extrabold text-sky-100 shadow-lg">
+            <BlueMascotSvg className="h-36 w-36 lg:h-48 lg:w-48 xl:h-52 xl:w-52 drop-shadow-2xl" />
+            <span className="mt-2 rounded-2xl border-2 border-sky-200 bg-blue-900/95 px-6 py-1.5 font-display text-lg lg:text-xl font-extrabold text-sky-100 shadow-lg">
               TIM BIRU
             </span>
           </div>
 
-          {/* Panel Pengaturan Tengah */}
-          <div className="flex w-full max-w-2xl flex-col gap-4 rounded-3xl border-4 border-sky-200 bg-blue-950/92 p-5 sm:p-6 text-white shadow-2xl">
+          {/* Panel Pengaturan Tengah — Proporsional untuk PID */}
+          <div className="flex w-full max-w-3xl flex-1 flex-col gap-3 sm:gap-3.5 rounded-3xl border-4 border-sky-200 bg-blue-950/92 p-4 sm:p-5 lg:p-6 text-white shadow-2xl">
             {/* A. Pilihan Mode: TOUCH | MOTION */}
-            <div className="grid grid-cols-2 gap-3.5">
+            <div className="grid grid-cols-2 gap-3 sm:gap-4">
               <button
                 type="button"
                 data-testid="select-mode-touch"
                 onClick={() =>
                   onUpdateSettings({ ...settings, battleMode: 'touch' })
                 }
-                className={`flex items-center justify-center gap-3 rounded-2xl border-4 px-4 py-3.5 transition-all cursor-pointer ${
+                className={`flex items-center justify-center gap-3 rounded-2xl border-4 px-4 py-3 sm:py-3.5 transition-all cursor-pointer ${
                   isTouchSelected
-                    ? 'border-white bg-gradient-to-b from-cyan-400 to-blue-600 text-white shadow-xl ring-4 ring-cyan-300/60 scale-[1.02]'
+                    ? 'border-white bg-gradient-to-b from-cyan-400 to-blue-600 text-white shadow-xl ring-4 ring-cyan-300/60 scale-[1.01]'
                     : 'border-sky-800 bg-slate-900/75 text-sky-200 hover:border-sky-500'
                 }`}
               >
                 <div
-                  className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border-2 ${
+                  className={`flex h-11 w-11 sm:h-12 sm:w-12 shrink-0 items-center justify-center rounded-xl border-2 ${
                     isTouchSelected
                       ? 'border-white bg-white/20 text-white'
                       : 'border-sky-700 bg-sky-950 text-sky-300'
                   }`}
                 >
-                  <Pointer className="h-7 w-7" />
+                  <Pointer className="h-6 w-6 sm:h-7 sm:w-7" />
                 </div>
                 <span className="font-display text-2xl sm:text-3xl font-extrabold tracking-wide">
                   TOUCH
@@ -162,14 +167,14 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
                 onClick={() =>
                   onUpdateSettings({ ...settings, battleMode: 'motion' })
                 }
-                className={`flex items-center justify-center gap-3 rounded-2xl border-4 px-4 py-3.5 transition-all cursor-pointer ${
+                className={`flex items-center justify-center gap-3 rounded-2xl border-4 px-4 py-3 sm:py-3.5 transition-all cursor-pointer ${
                   isMotionSelected
-                    ? 'border-white bg-gradient-to-b from-yellow-300 via-amber-400 to-orange-500 text-slate-950 shadow-xl ring-4 ring-yellow-300/60 scale-[1.02]'
+                    ? 'border-white bg-gradient-to-b from-yellow-300 via-amber-400 to-orange-500 text-slate-950 shadow-xl ring-4 ring-yellow-300/60 scale-[1.01]'
                     : 'border-sky-800 bg-slate-900/75 text-amber-200 hover:border-amber-500'
                 }`}
               >
                 <div
-                  className={`relative flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border-2 ${
+                  className={`relative flex h-11 w-11 sm:h-12 sm:w-12 shrink-0 items-center justify-center rounded-xl border-2 ${
                     isMotionSelected
                       ? 'border-slate-950/35 bg-white/35 text-slate-950'
                       : 'border-amber-700/70 bg-amber-950/80 text-yellow-300'
@@ -204,7 +209,7 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
             </div>
 
             {/* B. Pilihan Level: MUDAH | SEDANG | KOMPLEKS */}
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-3 gap-2.5 sm:gap-3">
               {SIMPLE_LEVEL_OPTIONS.map((lvl) => {
                 const isSelected = settings.level === lvl.id;
                 return (
@@ -215,7 +220,7 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
                     onClick={() =>
                       onUpdateSettings({ ...settings, level: lvl.id })
                     }
-                    className={`flex flex-col items-center justify-center rounded-2xl border-4 px-3 py-3 text-center transition-all cursor-pointer ${
+                    className={`flex flex-col items-center justify-center rounded-2xl border-4 px-2.5 py-2.5 sm:px-3 sm:py-3 text-center transition-all cursor-pointer ${
                       isSelected
                         ? 'border-yellow-200 bg-gradient-to-b from-sky-400 to-blue-600 text-white shadow-lg ring-2 ring-yellow-300'
                         : 'border-sky-800 bg-slate-900/75 text-sky-100 hover:border-sky-600'
@@ -233,7 +238,7 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
             </div>
 
             {/* C. Pilihan Durasi & Jumlah Soal (Segmented Controls) */}
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 sm:gap-3">
               {/* Durasi: 60 DETIK | 120 DETIK | 180 DETIK */}
               <div className="grid grid-cols-3 gap-1.5 rounded-2xl border-2 border-sky-700/80 bg-slate-950/90 p-1.5">
                 {([60, 120, 180] as const).map((sec) => (
@@ -244,7 +249,7 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
                     onClick={() =>
                       onUpdateSettings({ ...settings, durationSeconds: sec })
                     }
-                    className={`rounded-xl px-2 py-2.5 font-display text-xs sm:text-sm font-extrabold tabular-nums whitespace-nowrap transition-colors cursor-pointer ${
+                    className={`rounded-xl px-2 py-2 font-display text-xs sm:text-sm font-extrabold tabular-nums whitespace-nowrap transition-colors cursor-pointer ${
                       settings.durationSeconds === sec
                         ? 'bg-amber-400 text-slate-950 shadow'
                         : 'text-sky-200 hover:bg-sky-900/60'
@@ -265,7 +270,7 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
                     onClick={() =>
                       onUpdateSettings({ ...settings, totalQuestions: cnt })
                     }
-                    className={`rounded-xl px-2 py-2.5 font-display text-xs sm:text-sm font-extrabold tabular-nums whitespace-nowrap transition-colors cursor-pointer ${
+                    className={`rounded-xl px-2 py-2 font-display text-xs sm:text-sm font-extrabold tabular-nums whitespace-nowrap transition-colors cursor-pointer ${
                       settings.totalQuestions === cnt
                         ? 'bg-sky-400 text-slate-950 shadow'
                         : 'text-sky-200 hover:bg-sky-900/60'
@@ -277,35 +282,63 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
               </div>
             </div>
 
-            {/* D. Tombol Utama: MULAI BATTLE & Tombol Sekunder: PANDUAN */}
-            <div className="mt-1 flex flex-col items-center gap-2.5">
+            {/* D. Tombol Utama: MULAI BATTLE + Baris Kontrol Menu (FULL SCREEN & PANDUAN) */}
+            <div className="mt-0.5 flex flex-col items-center gap-2.5">
               <button
                 type="button"
                 data-start="true"
                 data-testid="btn-mulai-pertarungan"
                 onClick={() => onStartGame()}
-                className="flex w-full max-w-md items-center justify-center gap-3 rounded-2xl border-4 border-yellow-200 bg-gradient-to-b from-yellow-300 via-amber-400 to-orange-500 px-8 py-3.5 font-display text-2xl sm:text-3xl font-extrabold text-slate-950 shadow-2xl hover:brightness-105 active:scale-95 transition-transform whitespace-nowrap cursor-pointer"
+                className="flex w-full items-center justify-center gap-3 rounded-2xl border-4 border-yellow-200 bg-gradient-to-b from-yellow-300 via-amber-400 to-orange-500 px-8 py-3 sm:py-3.5 font-display text-2xl sm:text-3xl font-extrabold text-slate-950 shadow-2xl hover:brightness-105 active:scale-95 transition-transform whitespace-nowrap cursor-pointer"
               >
                 <Play className="h-7 w-7 fill-slate-950" />
                 <span>MULAI BATTLE</span>
               </button>
 
-              <button
-                type="button"
-                data-testid="btn-panduan-gerakan"
-                onClick={onOpenGuide}
-                className="flex items-center justify-center gap-2 rounded-xl border-2 border-sky-300/80 bg-sky-800/90 px-5 py-2 font-display text-sm sm:text-base font-bold text-sky-100 shadow hover:bg-sky-700 transition-colors whitespace-nowrap cursor-pointer"
-              >
-                <BookOpen className="h-4 w-4 text-yellow-300" />
-                <span>PANDUAN</span>
-              </button>
+              <div className="grid w-full grid-cols-2 gap-3">
+                {/* Tombol FULL SCREEN pada Menu Permainan */}
+                <button
+                  type="button"
+                  data-testid="btn-fullscreen-menu"
+                  aria-pressed={isFullscreen}
+                  onClick={onToggleFullscreen}
+                  className={`flex items-center justify-center gap-2 rounded-2xl border-2 px-4 py-2.5 font-display text-sm sm:text-base font-extrabold shadow-lg transition-all active:scale-95 whitespace-nowrap cursor-pointer ${
+                    isFullscreen
+                      ? 'border-emerald-200 bg-gradient-to-b from-emerald-400 to-teal-600 text-slate-950 ring-2 ring-emerald-300/60'
+                      : 'border-cyan-200 bg-gradient-to-b from-cyan-500 to-sky-700 text-white hover:brightness-110'
+                  }`}
+                >
+                  {isFullscreen ? (
+                    <>
+                      <Minimize2 className="h-5 w-5 shrink-0 stroke-[2.5]" />
+                      <span>KELUAR FULL SCREEN</span>
+                    </>
+                  ) : (
+                    <>
+                      <Maximize2 className="h-5 w-5 shrink-0 stroke-[2.5]" />
+                      <span>FULL SCREEN</span>
+                    </>
+                  )}
+                </button>
+
+                {/* Tombol PANDUAN */}
+                <button
+                  type="button"
+                  data-testid="btn-panduan-gerakan"
+                  onClick={onOpenGuide}
+                  className="flex items-center justify-center gap-2 rounded-2xl border-2 border-sky-300/80 bg-sky-800/95 px-4 py-2.5 font-display text-sm sm:text-base font-extrabold text-sky-100 shadow-lg hover:bg-sky-700 active:scale-95 transition-all whitespace-nowrap cursor-pointer"
+                >
+                  <BookOpen className="h-5 w-5 shrink-0 text-yellow-300" />
+                  <span>PANDUAN</span>
+                </button>
+              </div>
             </div>
           </div>
 
           {/* Karakter Tim Kuning (Sisi Kanan) */}
           <div className="animate-float-slow hidden md:flex flex-col items-center shrink-0">
-            <YellowMascotSvg className="h-36 w-36 lg:h-44 lg:w-44 drop-shadow-2xl" />
-            <span className="mt-2 rounded-2xl border-2 border-yellow-200 bg-amber-900/95 px-5 py-1.5 font-display text-lg font-extrabold text-yellow-100 shadow-lg">
+            <YellowMascotSvg className="h-36 w-36 lg:h-48 lg:w-48 xl:h-52 xl:w-52 drop-shadow-2xl" />
+            <span className="mt-2 rounded-2xl border-2 border-yellow-200 bg-amber-900/95 px-6 py-1.5 font-display text-lg lg:text-xl font-extrabold text-yellow-100 shadow-lg">
               TIM KUNING
             </span>
           </div>

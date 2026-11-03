@@ -15,6 +15,8 @@ import {
   Hand,
   Pointer,
   ArrowLeft,
+  Maximize2,
+  Minimize2,
 } from 'lucide-react';
 import {
   AnswerBubble,
@@ -48,7 +50,10 @@ import {
 import { soundEngine } from './game/sound';
 import { motionHub } from './game/motionAdapter';
 import { AquaKingdomBackdrop } from './components/AquaKingdomBackdrop';
-import { FullscreenCameraBackground } from './components/FullscreenCameraBackground';
+import {
+  FullscreenCameraBackground,
+  releaseCachedMotionCameraStream,
+} from './components/FullscreenCameraBackground';
 import { CenterWaterTimer, TeamScorePlaque } from './components/MascotPlaque';
 import { AnswerBubbleNode } from './components/AnswerBubbleNode';
 import { TeamMotionDock } from './components/TeamMotionDock';
@@ -125,10 +130,78 @@ export default function App() {
   const [isGuideOpen, setIsGuideOpen] = useState<boolean>(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState<boolean>(false);
+  const [isFullscreen, setIsFullscreen] = useState<boolean>(() =>
+    typeof document !== 'undefined' ? Boolean(document.fullscreenElement) : false
+  );
   const [isRoundValidated, setIsRoundValidated] = useState<boolean>(false);
   const [, setStatusAnnouncement] = useState<string>(
     'Hitung bersama kelompokmu dan pilih jawaban yang benar!'
   );
+
+  // Sync Fullscreen API state with browser / PID hardware events
+  useEffect(() => {
+    const syncFullscreenState = () => {
+      const fsElem =
+        document.fullscreenElement ||
+        (document as unknown as { webkitFullscreenElement?: Element | null })
+          .webkitFullscreenElement;
+      const active = Boolean(fsElem);
+      setIsFullscreen(active);
+      document.body.dataset.fullscreen = active ? 'true' : 'false';
+    };
+
+    document.addEventListener('fullscreenchange', syncFullscreenState);
+    document.addEventListener('webkitfullscreenchange', syncFullscreenState);
+    return () => {
+      document.removeEventListener('fullscreenchange', syncFullscreenState);
+      document.removeEventListener(
+        'webkitfullscreenchange',
+        syncFullscreenState
+      );
+    };
+  }, []);
+
+  // Toggle Fullscreen Mode via Fullscreen API (without requesting camera permissions)
+  const handleToggleFullscreen = useCallback(async () => {
+    if (typeof document === 'undefined') return;
+    const docWithWebkit = document as Document & {
+      webkitFullscreenElement?: Element | null;
+      webkitExitFullscreen?: () => Promise<void> | void;
+    };
+    const rootWithWebkit = document.documentElement as HTMLElement & {
+      webkitRequestFullscreen?: () => Promise<void> | void;
+    };
+
+    const hasActiveNativeFs = Boolean(
+      document.fullscreenElement || docWithWebkit.webkitFullscreenElement
+    );
+
+    if (hasActiveNativeFs || isFullscreen) {
+      try {
+        if (document.fullscreenElement && document.exitFullscreen) {
+          await document.exitFullscreen();
+        } else if (docWithWebkit.webkitExitFullscreen) {
+          await docWithWebkit.webkitExitFullscreen();
+        }
+      } catch {
+        // Ignore if browser blocked exitFullscreen in restricted preview iframe
+      }
+      setIsFullscreen(false);
+      document.body.dataset.fullscreen = 'false';
+    } else {
+      try {
+        if (rootWithWebkit.requestFullscreen) {
+          await rootWithWebkit.requestFullscreen();
+        } else if (rootWithWebkit.webkitRequestFullscreen) {
+          await rootWithWebkit.webkitRequestFullscreen();
+        }
+      } catch {
+        // Fallback for restricted iframe environments so PID full-viewport mode remains active
+      }
+      setIsFullscreen(true);
+      document.body.dataset.fullscreen = 'true';
+    }
+  }, [isFullscreen]);
 
   // Offline-First, Supabase Realtime & Power-Outage Recovery State
   const [syncIndicator, setSyncIndicator] = useState<SyncIndicatorState>(() =>
@@ -189,6 +262,7 @@ export default function App() {
   const handleBackToTitle = useCallback(() => {
     clearPendingRoundTimer();
     clearActiveCheckpoint();
+    releaseCachedMotionCameraStream();
     setRecoverableCheckpoint(null);
     validationLockedRef.current = false;
     setIsRoundValidated(false);
@@ -592,7 +666,10 @@ export default function App() {
       const currentTeamState =
         team === 'blue' ? blueTeamRef.current : yellowTeamRef.current;
 
-      if (isTeamOnCooldown(currentTeamState, now)) {
+      if (
+        currentTeamState.hasAnsweredRound ||
+        isTeamOnCooldown(currentTeamState, now)
+      ) {
         return;
       }
 
@@ -1042,16 +1119,12 @@ export default function App() {
   if (gameState === 'title') {
     return (
       <>
-        <div className="fixed right-4 top-3 z-30">
-          <SyncStatusBadge
-            indicator={syncIndicator}
-            matchCount={savedMatches.length}
-            errorMessage={syncErrorMessage}
-            onOpenHistory={() => setIsHistoryOpen(true)}
-          />
-        </div>
         <TitleScreen
           settings={settings}
+          isFullscreen={isFullscreen}
+          onToggleFullscreen={() => {
+            void handleToggleFullscreen();
+          }}
           onUpdateSettings={(next) => {
             setSettings(next);
             settingsRef.current = next;
@@ -1108,7 +1181,7 @@ export default function App() {
         isTouchMode ? 'aqua-touch-battle-stage' : 'aqua-motion-battle-stage'
       }
       data-battle-mode={settings.battleMode}
-      className="relative h-screen w-screen overflow-hidden select-none bg-sky-950"
+      className="relative h-dvh w-dvw overflow-hidden select-none bg-sky-950"
     >
       {/* 1. BACKGROUND SYSTEM: Strictly separated by mode!
           - TOUCH BATTLE: Illustrated Aqua City Backdrop ONLY (no camera, no tracking).
@@ -1137,14 +1210,10 @@ export default function App() {
       {/* 2. Isolated 60Hz Pooled Water Particle Canvas */}
       <WaterSplashCanvas ref={splashCanvasRef} />
 
-      {/* 3. Full-Viewport Battle HUD Overlay */}
-      <div
-        className={`pointer-events-none fixed inset-0 z-20 flex flex-col justify-between p-3 sm:p-5 ${
-          isMotionMode ? 'pt-9 sm:pt-10' : ''
-        }`}
-      >
+      {/* 3. Full-Viewport Battle HUD Overlay — Minimal outer padding for Full Screen PID */}
+      <div className="pointer-events-none fixed inset-0 z-20 flex flex-col justify-between p-2 sm:p-3 lg:p-3.5">
         {/* TOP ROW: Left = Skor Tim Biru, Center = Soal Matematika Kelas 5 SD, Right = Skor Tim Kuning */}
-        <div className="flex items-start justify-between gap-2 sm:gap-4">
+        <div className="flex items-start justify-between gap-2 sm:gap-3">
           {/* Kiri Atas: Skor Tim Biru */}
           <div className="pointer-events-auto flex flex-col items-start">
             <TeamScorePlaque
@@ -1155,9 +1224,9 @@ export default function App() {
           </div>
 
           {/* Tengah Atas: Soal Matematika Kelas 5 SD */}
-          <div className="flex flex-col items-center max-w-2xl flex-1">
-            {/* Compact Utility Controls */}
-            <div className="pointer-events-auto mb-2 flex flex-wrap items-center justify-center gap-1.5">
+          <div className="flex flex-col items-center max-w-3xl flex-1">
+            {/* Compact Utility Controls — single row on PID landscape */}
+            <div className="pointer-events-auto mb-1.5 flex flex-wrap items-center justify-center gap-1.5">
               <span
                 data-testid="active-mode-pill"
                 className={`flex items-center gap-1.5 rounded-xl border-2 px-3 py-1 text-xs font-extrabold shadow whitespace-nowrap ${
@@ -1191,6 +1260,37 @@ export default function App() {
               >
                 <ArrowLeft className="h-3.5 w-3.5 text-yellow-300" />
                 <span>Menu</span>
+              </button>
+
+              <button
+                type="button"
+                tabIndex={-1}
+                data-testid="btn-fullscreen-battle"
+                aria-pressed={isFullscreen}
+                onClick={(e) => {
+                  void handleToggleFullscreen();
+                  e.currentTarget.blur();
+                }}
+                aria-label={
+                  isFullscreen ? 'Keluar dari Full Screen' : 'Masuk Full Screen'
+                }
+                className={`flex items-center gap-1 rounded-xl border-2 px-2.5 py-1 text-xs font-extrabold shadow whitespace-nowrap cursor-pointer ${
+                  isFullscreen
+                    ? 'border-emerald-300 bg-emerald-950/90 text-emerald-200 hover:bg-emerald-900'
+                    : 'border-cyan-300/90 bg-cyan-950/90 text-cyan-100 hover:bg-cyan-900'
+                }`}
+              >
+                {isFullscreen ? (
+                  <>
+                    <Minimize2 className="h-3.5 w-3.5 text-emerald-300" />
+                    <span>KELUAR FULL SCREEN</span>
+                  </>
+                ) : (
+                  <>
+                    <Maximize2 className="h-3.5 w-3.5 text-cyan-300" />
+                    <span>FULL SCREEN</span>
+                  </>
+                )}
               </button>
 
               <button
@@ -1271,7 +1371,7 @@ export default function App() {
             {/* High-Contrast Question Plaque */}
             <div
               data-testid="math-question-box"
-              className="pointer-events-auto relative flex w-full flex-col items-center justify-center rounded-3xl border-4 border-sky-400 bg-white/95 px-5 py-2.5 sm:py-3.5 text-center shadow-2xl ring-4 ring-blue-900/90"
+              className="pointer-events-auto relative flex w-full flex-col items-center justify-center rounded-3xl border-4 border-sky-400 bg-white/95 px-4 py-2 sm:px-5 sm:py-3 text-center shadow-2xl ring-4 ring-blue-900/90"
             >
               <div className="flex flex-wrap items-center justify-center gap-2 text-[11px] sm:text-xs font-extrabold tracking-wider text-sky-800">
                 <span data-testid="round-indicator">

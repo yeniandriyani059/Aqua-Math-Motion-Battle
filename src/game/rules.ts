@@ -848,8 +848,12 @@ export function evaluateBubbleHit(
   timestamp: number = Date.now(),
   expectedCorrectAnswer?: number
 ): HitEvaluationResult {
-  // Enforce team alignment & cooldown
-  if (bubble.team !== teamState.team || isTeamOnCooldown(teamState, timestamp)) {
+  // Enforce team alignment, single answer per round, & cooldown
+  if (
+    bubble.team !== teamState.team ||
+    teamState.hasAnsweredRound ||
+    isTeamOnCooldown(teamState, timestamp)
+  ) {
     return {
       updatedTeam: teamState,
       pointsAwarded: 0,
